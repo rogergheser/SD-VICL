@@ -1,2 +1,88 @@
 # SD-VICL
 Repo to reproduce the work in https://arxiv.org/pdf/2508.09949
+
+## Installation
+
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+### Command Line
+
+```bash
+python generate.py --prompt "a photograph of an astronaut riding a horse" --output astronaut.png
+```
+
+#### Options
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--prompt` | (required) | Text prompt for generation |
+| `--negative-prompt` | "" | Negative prompt |
+| `--model` | stabilityai/stable-diffusion-2-1-base | HuggingFace model ID |
+| `--height` | 512 | Image height |
+| `--width` | 512 | Image width |
+| `--steps` | 50 | Number of inference steps |
+| `--guidance-scale` | 7.5 | Classifier-free guidance scale |
+| `--num-images` | 1 | Number of images to generate |
+| `--seed` | None | Random seed for reproducibility |
+| `--output` | output.png | Output file path |
+| `--scheduler` | ddpm | Scheduler type (ddpm, ddim, euler, pndm) |
+| `--device` | auto | Device (cuda/cpu) |
+
+### Python API
+
+```python
+from generate import create_pipeline, GenerationConfig
+
+# Create pipeline
+pipeline = create_pipeline(model_id="stabilityai/stable-diffusion-2-1-base")
+
+# Configure generation
+config = GenerationConfig(
+    prompt="a photograph of an astronaut riding a horse",
+    num_inference_steps=50,
+    guidance_scale=7.5,
+    seed=42
+)
+
+# Generate images
+images = pipeline.generate(config)
+images[0].save("output.png")
+```
+
+## Architecture
+
+The codebase is designed with modularity in mind to allow easy modification of U-Net attention mechanisms:
+
+### Components
+
+- **`ModelLoader`**: Handles loading of model components (VAE, U-Net, Text Encoder, Scheduler)
+- **`TextEncoder`**: Wraps text encoding for conditioning
+- **`LatentProcessor`**: Handles latent space operations (encode/decode)
+- **`UNetWrapper`**: Wraps U-Net for easy attention modification
+- **`DiffusionPipeline`**: Main pipeline orchestrating generation
+
+### Modifying U-Net Attention
+
+The `UNetWrapper` class is designed for extending with custom attention mechanisms:
+
+```python
+from generate import UNetWrapper, create_pipeline
+
+class CustomUNetWrapper(UNetWrapper):
+    def forward(self, latents, timestep, encoder_hidden_states, **kwargs):
+        # Custom attention logic here
+        # Access attention layers via self.get_attention_layers()
+        return super().forward(latents, timestep, encoder_hidden_states, **kwargs)
+
+# Use custom wrapper
+pipeline = create_pipeline()
+pipeline.unet_wrapper = CustomUNetWrapper(
+    pipeline.unet_wrapper.unet,
+    pipeline.device,
+    pipeline.dtype
+)
+```
