@@ -54,6 +54,8 @@ def run_experiment(cfg: DictConfig) -> None:
     )
     
     # Create generation config
+    # Note: device and dtype are auto-detected by GenerationConfig defaults
+    # and aligned with the pipeline's settings
     config = GenerationConfig(
         prompt=cfg.generation.prompt,
         negative_prompt=cfg.generation.negative_prompt,
@@ -62,7 +64,8 @@ def run_experiment(cfg: DictConfig) -> None:
         num_inference_steps=cfg.generation.num_inference_steps,
         guidance_scale=cfg.generation.guidance_scale,
         num_images=cfg.generation.num_images,
-        seed=cfg.generation.seed
+        seed=cfg.generation.seed,
+        device=pipeline.device
     )
     
     print(f"Generating image with prompt: {config.prompt}")
