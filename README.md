@@ -9,7 +9,27 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Command Line
+### Hydra-based Experiments (Recommended)
+
+Use Hydra for reproducible experiment configuration:
+
+```bash
+# Run with default config
+python run_experiment.py
+
+# Override parameters via command line
+python run_experiment.py generation.prompt="a cat in space" generation.seed=42
+
+# Override multiple parameters
+python run_experiment.py model.scheduler=ddim generation.num_inference_steps=25
+
+# Multi-run with parameter sweeps
+python run_experiment.py -m generation.seed=1,2,3,4,5
+```
+
+Configuration is defined in `conf/config.yaml`. Create custom config files in the `conf/` directory for different experiments.
+
+### Command Line (argparse)
 
 ```bash
 python generate.py --prompt "a photograph of an astronaut riding a horse" --output astronaut.png

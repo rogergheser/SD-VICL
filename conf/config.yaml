@@ -1,0 +1,26 @@
+# Default configuration for SD-VICL image generation experiments
+# Override any setting via command line: python run_experiment.py generation.prompt="your prompt"
+
+# Model configuration
+model:
+  id: "stabilityai/stable-diffusion-2-1-base"
+  scheduler: "ddpm"  # Options: ddpm, ddim, euler, pndm
+
+# Generation parameters
+generation:
+  prompt: "a photograph of an astronaut riding a horse"
+  negative_prompt: ""
+  height: 512
+  width: 512
+  num_inference_steps: 50
+  guidance_scale: 7.5
+  num_images: 1
+  seed: null
+
+# Hardware configuration
+hardware:
+  device: null  # null for auto-detection (cuda if available, else cpu)
+
+# Output configuration
+output:
+  path: "output.png"
