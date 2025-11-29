@@ -17,7 +17,7 @@ Usage:
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from PIL import Image
@@ -285,6 +285,10 @@ class CoCoDataModule(HuggingFaceDataModule):
         if image.mode != "RGB":
             image = image.convert("RGB")
         
+        # Capture original dimensions before any transforms
+        original_width = sample.get("width", image.width)
+        original_height = sample.get("height", image.height)
+        
         # Resize if specified
         if self.image_size is not None:
             image = self._resize_image(image)
@@ -297,8 +301,8 @@ class CoCoDataModule(HuggingFaceDataModule):
         result = {
             "image": image,
             "image_id": sample.get("image_id", idx),
-            "width": sample.get("width", image.width if isinstance(image, Image.Image) else None),
-            "height": sample.get("height", image.height if isinstance(image, Image.Image) else None),
+            "width": original_width,
+            "height": original_height,
         }
         
         # Extract objects/annotations
@@ -330,6 +334,10 @@ class CoCoDataModule(HuggingFaceDataModule):
     def get_sample_by_id(self, image_id: int) -> Optional[Dict[str, Any]]:
         """
         Get a sample by its image ID.
+        
+        Note: This performs a linear search through the dataset with O(n) complexity.
+        For large datasets, consider building an index mapping image_id to idx
+        if frequent lookups by ID are needed.
         
         Args:
             image_id: The image ID to search for
