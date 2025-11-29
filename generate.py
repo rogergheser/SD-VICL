@@ -198,6 +198,8 @@ class LatentProcessor:
         self.device = device
         self.dtype = dtype
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        # Latent channels from VAE config (typically 4 for SD models)
+        self.latent_channels = self.vae.config.latent_channels
     
     def encode_image(self, image: Image.Image) -> torch.Tensor:
         """Encode an image to latent space."""
@@ -264,7 +266,7 @@ class LatentProcessor:
         latent_width = width // self.vae_scale_factor
         
         latents = torch.randn(
-            (batch_size, 4, latent_height, latent_width),
+            (batch_size, self.latent_channels, latent_height, latent_width),
             generator=generator,
             device=self.device,
             dtype=self.dtype
@@ -279,6 +281,12 @@ class UNetWrapper:
     
     This is the main class to extend for custom attention passes.
     Override the `forward` method or use hooks to modify attention behavior.
+    
+    Note: The attention hook infrastructure is provided as a foundation for
+    future custom attention implementations. To implement custom attention:
+    1. Subclass UNetWrapper
+    2. Override the `forward` method
+    3. Use `get_attention_layers()` to access attention modules
     """
     
     def __init__(self, unet, device: str = "cuda", dtype: torch.dtype = torch.float16):
@@ -297,7 +305,10 @@ class UNetWrapper:
     
     def register_attention_hook(self, hook_fn: Callable) -> None:
         """
-        Register a hook for attention layers.
+        Register a hook for attention layers (placeholder for future implementation).
+        
+        This is a stub for implementing custom attention mechanisms.
+        Subclasses can override the `forward` method to use these hooks.
         
         Args:
             hook_fn: Hook function to call during attention
@@ -415,25 +426,22 @@ class DiffusionPipeline:
         if config.seed is not None:
             generator = torch.Generator(device=self.device).manual_seed(config.seed)
         
-        # Encode text
+        # Encode text prompt
         text_embeddings = self.text_encoder_wrapper.encode(config.prompt)
+        
+        # Handle classifier-free guidance - duplicate embeddings for batch
+        if config.num_images > 1:
+            text_embeddings = text_embeddings.repeat(config.num_images, 1, 1)
         
         # Handle classifier-free guidance
         if config.guidance_scale > 1.0:
             uncond_embeddings = self.text_encoder_wrapper.encode(
                 config.negative_prompt if config.negative_prompt else ""
             )
+            if config.num_images > 1:
+                uncond_embeddings = uncond_embeddings.repeat(config.num_images, 1, 1)
+            # Concatenate: [uncond_batch, cond_batch]
             text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
-        
-        # Duplicate embeddings for batch
-        text_embeddings = text_embeddings.repeat(config.num_images, 1, 1)
-        if config.guidance_scale > 1.0:
-            # Already concatenated, just need to interleave
-            batch_size = config.num_images
-            text_embeddings = torch.cat([
-                text_embeddings[:batch_size],  # uncond
-                text_embeddings[batch_size:]   # cond
-            ])
         
         # Get initial latents
         latents = self.latent_processor.get_initial_latents(
