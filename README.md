@@ -53,6 +53,37 @@ images = pipeline.generate(config)
 images[0].save("output.png")
 ```
 
+### Loading Datasets from HuggingFace
+
+The `datamodule` provides easy access to datasets from HuggingFace Hub, with built-in support for COCO:
+
+```python
+from datamodule import CoCoDataModule, create_coco_datamodule
+
+# Load COCO dataset
+coco = CoCoDataModule(split="train")
+
+# Or use the factory function
+coco = create_coco_datamodule(split="train", image_size=512)
+
+# Access samples
+sample = coco[0]
+image = sample["image"]       # PIL Image
+objects = sample["objects"]   # Annotations (bboxes, categories, etc.)
+
+# Create a PyTorch DataLoader
+dataloader = coco.get_dataloader(batch_size=4, shuffle=True)
+
+# Use custom transforms
+import torchvision.transforms as T
+
+transform = T.Compose([
+    T.Resize((512, 512)),
+    T.ToTensor(),
+])
+coco = CoCoDataModule(split="train", transform=transform)
+```
+
 ## Architecture
 
 The codebase is designed with modularity in mind to allow easy modification of U-Net attention mechanisms:
@@ -64,6 +95,8 @@ The codebase is designed with modularity in mind to allow easy modification of U
 - **`LatentProcessor`**: Handles latent space operations (encode/decode)
 - **`UNetWrapper`**: Wraps U-Net for easy attention modification
 - **`DiffusionPipeline`**: Main pipeline orchestrating generation
+- **`CoCoDataModule`**: DataModule for loading COCO dataset from HuggingFace
+- **`HuggingFaceDataModule`**: Base class for HuggingFace dataset integration
 
 ### Modifying U-Net Attention
 
