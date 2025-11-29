@@ -9,28 +9,28 @@ pip install -r requirements.txt
 
 ## Usage
 
-### Command Line
+### Hydra-based Experiments (Recommended)
+
+Use Hydra for reproducible in-context learning experiment configuration:
 
 ```bash
-python generate.py --prompt "a photograph of an astronaut riding a horse" --output astronaut.png
+# Run with default config
+python run_experiment.py
+
+# Specify context pairs and query image for in-context learning
+python run_experiment.py \
+    context.pairs.0.input=image1.png context.pairs.0.target=mask1.png \
+    context.pairs.1.input=image2.png context.pairs.1.target=mask2.png \
+    context.query=query.png
+
+# Override experiment parameters
+python run_experiment.py experiment.seed=42 model.scheduler=ddim
+
+# Multi-run with parameter sweeps
+python run_experiment.py -m experiment.seed=1,2,3,4,5
 ```
 
-#### Options
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--prompt` | (required) | Text prompt for generation |
-| `--negative-prompt` | "" | Negative prompt |
-| `--model` | stabilityai/stable-diffusion-2-1-base | HuggingFace model ID |
-| `--height` | 512 | Image height |
-| `--width` | 512 | Image width |
-| `--steps` | 50 | Number of inference steps |
-| `--guidance-scale` | 7.5 | Classifier-free guidance scale |
-| `--num-images` | 1 | Number of images to generate |
-| `--seed` | None | Random seed for reproducibility |
-| `--output` | output.png | Output file path |
-| `--scheduler` | ddpm | Scheduler type (ddpm, ddim, euler, pndm) |
-| `--device` | auto | Device (cuda/cpu) |
+Configuration is defined in `conf/config.yaml`. Create custom config files in the `conf/` directory for different experiments (e.g., segmentation, depth estimation, etc.).
 
 ### Python API
 

@@ -1,0 +1,38 @@
+# Default configuration for SD-VICL in-context learning experiments
+# This supports visual in-context learning where context images guide generation
+# Override any setting via command line: python run_experiment.py experiment.seed=42
+
+# Model configuration
+model:
+  id: "stabilityai/stable-diffusion-2-1-base"
+  scheduler: "ddpm"  # Options: ddpm, ddim, euler, pndm
+
+# In-context learning configuration
+# Provide context image pairs (input + target) to teach the model a visual task
+# Example: For segmentation, provide images and their corresponding masks
+context:
+  # List of context image pairs
+  # At least one pair with both input and target is recommended
+  pairs:
+    - input: null   # Path to first context input image (required for ICL)
+      target: null  # Path to first context target/mask image (required for ICL)
+    - input: null   # Path to additional context input image (optional)
+      target: null  # Path to additional context target/mask image (optional)
+  # Query image to generate output for
+  query: null  # Path to query image (required for inference)
+
+# Experiment parameters
+experiment:
+  height: 512
+  width: 512
+  num_inference_steps: 50
+  guidance_scale: 7.5
+  seed: null
+
+# Hardware configuration
+hardware:
+  device: null  # null for auto-detection (cuda if available, else cpu)
+
+# Output configuration
+output:
+  path: "output.png"
