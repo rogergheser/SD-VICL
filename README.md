@@ -11,46 +11,26 @@ pip install -r requirements.txt
 
 ### Hydra-based Experiments (Recommended)
 
-Use Hydra for reproducible experiment configuration:
+Use Hydra for reproducible in-context learning experiment configuration:
 
 ```bash
 # Run with default config
 python run_experiment.py
 
-# Override parameters via command line
-python run_experiment.py generation.prompt="a cat in space" generation.seed=42
+# Specify context pairs and query image for in-context learning
+python run_experiment.py \
+    context.pairs.0.input=image1.png context.pairs.0.target=mask1.png \
+    context.pairs.1.input=image2.png context.pairs.1.target=mask2.png \
+    context.query=query.png
 
-# Override multiple parameters
-python run_experiment.py model.scheduler=ddim generation.num_inference_steps=25
+# Override experiment parameters
+python run_experiment.py experiment.seed=42 model.scheduler=ddim
 
 # Multi-run with parameter sweeps
-python run_experiment.py -m generation.seed=1,2,3,4,5
+python run_experiment.py -m experiment.seed=1,2,3,4,5
 ```
 
-Configuration is defined in `conf/config.yaml`. Create custom config files in the `conf/` directory for different experiments.
-
-### Command Line (argparse)
-
-```bash
-python generate.py --prompt "a photograph of an astronaut riding a horse" --output astronaut.png
-```
-
-#### Options
-
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--prompt` | (required) | Text prompt for generation |
-| `--negative-prompt` | "" | Negative prompt |
-| `--model` | stabilityai/stable-diffusion-2-1-base | HuggingFace model ID |
-| `--height` | 512 | Image height |
-| `--width` | 512 | Image width |
-| `--steps` | 50 | Number of inference steps |
-| `--guidance-scale` | 7.5 | Classifier-free guidance scale |
-| `--num-images` | 1 | Number of images to generate |
-| `--seed` | None | Random seed for reproducibility |
-| `--output` | output.png | Output file path |
-| `--scheduler` | ddpm | Scheduler type (ddpm, ddim, euler, pndm) |
-| `--device` | auto | Device (cuda/cpu) |
+Configuration is defined in `conf/config.yaml`. Create custom config files in the `conf/` directory for different experiments (e.g., segmentation, depth estimation, etc.).
 
 ### Python API
 
