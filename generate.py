@@ -5,12 +5,13 @@ This module provides modular building blocks for latent diffusion image generati
 The architecture is designed to allow easy modification of U-Net attention mechanisms.
 """
 
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional, Union, List, Callable
 import torch
 from PIL import Image
 
-
+ATTN_OUTPUTS = defaultdict(lambda: defaultdict(list))
 @dataclass
 class GenerationConfig:
     """Configuration for image generation."""
@@ -22,8 +23,8 @@ class GenerationConfig:
     guidance_scale: float = 7.5
     num_images: int = 1
     seed: Optional[int] = None
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype: torch.dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+    device: str = "mps" if torch.backends.mps.is_available() else "cpu"
+    dtype: torch.dtype = torch.float16 if torch.backends.mps.is_available() else torch.float32
 
 
 class ModelLoader:
@@ -301,24 +302,77 @@ class UNetWrapper:
         self.unet = unet
         self.device = device
         self.dtype = dtype
-        self._attention_hooks = []
+        self._attention_hooks = {}
+        self.register_attention_hook()
     
-    def register_attention_hook(self, hook_fn: Callable) -> None:
+    def register_attention_hook(self) -> None:
         """
-        Register a hook for attention layers (placeholder for future implementation).
-        
-        This is a stub for implementing custom attention mechanisms.
-        Subclasses can override the `forward` method to use these hooks.
-        
-        Args:
-            hook_fn: Hook function to call during attention
+        Register forward hooks on the Q/K/V linear submodules inside attention blocks.
+        After calling this, ATTN_OUTPUTS will have entries like:
+        ATTN_OUTPUTS['unet.down_blocks.3.attn_1.to_q']['outputs'] = [tensor, ...]
         """
-        self._attention_hooks.append(hook_fn)
-    
+        # clear existing hooks first
+        self.clear_attention_hooks()
+
+        attn_layers = self.get_attention_layers()  # list of (full_name, module)
+
+        def make_hook(full_child_name, which):
+            # TODO change hook so that it keeps a counter to understand which sample it is processing and can decide what to save accordingly
+            # returns a hook that stores the output tensor
+            def hook(module, inp, out):
+                # out may be a tensor or tuple - keep it simple and store tensor(s)
+                # detach to avoid grads and optionally move to cpu to avoid GPU memory growth
+                if isinstance(out, torch.Tensor):
+                    saved = out.detach().cpu()  # remove .cpu() if you want to keep cuda tensors
+                else:
+                    # tuple/list of tensors
+                    saved = tuple(o.detach().cpu() if isinstance(o, torch.Tensor) else o for o in out)
+                ATTN_OUTPUTS[full_child_name][which].append(saved)
+            return hook
+
+        for parent_name, attn_module in attn_layers:
+            # iterate child modules to find to_q/to_k/to_v (attribute names vary by implementation)
+            for child_name, child_mod in attn_module.named_modules():
+                lname = child_name.lower()
+                if 'to_q' in lname or child_name.lower().endswith('.q') or lname == 'q':
+                    full_child_name = f"{parent_name}.{child_name}"
+                    handle = child_mod.register_forward_hook(make_hook(full_child_name, 'q'))
+                    self._attention_hooks[full_child_name] = handle
+                    ATTN_OUTPUTS[full_child_name]  # ensure key exists
+                elif 'to_k' in lname or child_name.lower().endswith('.k') or lname == 'k':
+                    full_child_name = f"{parent_name}.{child_name}"
+                    handle = child_mod.register_forward_hook(make_hook(full_child_name, 'k'))
+                    self._attention_hooks[full_child_name] = handle
+                    ATTN_OUTPUTS[full_child_name]
+                elif 'to_v' in lname or child_name.lower().endswith('.v') or lname == 'v':
+                    full_child_name = f"{parent_name}.{child_name}"
+                    handle = child_mod.register_forward_hook(make_hook(full_child_name, 'v'))
+                    self._attention_hooks[full_child_name] = handle
+                    ATTN_OUTPUTS[full_child_name]
+                elif '' in lname:
+                    # This is the attention module, we will work with this later
+                    continue
+
+        # fallback: if nothing matched (different naming), scan immediate attributes on attn_module
+        if len(self._attention_hooks) == 0:
+            for parent_name, attn_module in attn_layers:
+                for attr in ('to_q', 'to_k', 'to_v', 'q_proj', 'k_proj', 'v_proj'):
+                    if hasattr(attn_module, attr):
+                        child_mod = getattr(attn_module, attr)
+                        full_child_name = f"{parent_name}.{attr}"
+                        handle = child_mod.register_forward_hook(make_hook(full_child_name, attr[-1]))  # 'q','k','v'
+                        self._attention_hooks[full_child_name] = handle
+                        ATTN_OUTPUTS[full_child_name]
+
     def clear_attention_hooks(self) -> None:
         """Clear all registered attention hooks."""
-        self._attention_hooks = []
-    
+        for handle in list(self._attention_hooks.values()):
+            try:
+                handle.remove()
+            except Exception:
+                pass
+        self._attention_hooks.clear()
+
     def get_attention_layers(self):
         """
         Get all attention layers in the U-Net.
@@ -353,13 +407,34 @@ class UNetWrapper:
         Returns:
             Predicted noise
         """
-        noise_pred = self.unet(
-            latents,
-            timestep,
-            encoder_hidden_states=encoder_hidden_states,
-            **kwargs
-        ).sample
+        dict_map = "ABCD"
+        self_attn_outputs = {}
+        for i in range(3):
+            # Forward pass with current forward hooks to extract QKV values
+            noise_pred = self.unet(
+                latents[i],
+                timestep,
+                encoder_hidden_states=encoder_hidden_states,
+                **kwargs
+            ).sample
+
+            self_attn_outputs[dict_map[i]] = ATTN_OUTPUTS.copy()
+            # Clear ATTN_OUTPUTS for next pass
+            for key in ATTN_OUTPUTS.keys():
+                ATTN_OUTPUTS[key]['q'].clear()
+                ATTN_OUTPUTS[key]['k'].clear()
+                ATTN_OUTPUTS[key]['v'].clear()
         
+
+        # TODO Register different forward hook to adapt the custom attention mechanism for D
+        # The forward hook will take care of modifying the inputs to the attention mechanisms
+        noise_pred = self.unet(
+                latents[-1],
+                timestep,
+                encoder_hidden_states=encoder_hidden_states,
+                **kwargs
+            ).sample
+
         return noise_pred
 
 
@@ -525,9 +600,11 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description="Generate images using latent diffusion models")
-    parser.add_argument("--prompt", type=str, required=True, help="Text prompt for generation")
+    parser.add_argument("--prompt", type=str, default="", help="Text prompt for generation")
     parser.add_argument("--negative-prompt", type=str, default="", help="Negative prompt")
-    parser.add_argument("--model", type=str, default="stabilityai/stable-diffusion-2-1-base", help="Model ID")
+    parser.add_argument("--model", type=str, default="sd-legacy/stable-diffusion-v1-5", help="Model ID")
+    # parser.add_argument("--model", type=str, default="stabilityai/stable-diffusion-3-medium_amdgpu", help="Model ID")
+    # parser.add_argument("--model", type=str, default="stabilityai/stable-diffusion-2-1-base", help="Model ID")
     parser.add_argument("--height", type=int, default=512, help="Image height")
     parser.add_argument("--width", type=int, default=512, help="Image width")
     parser.add_argument("--steps", type=int, default=50, help="Number of inference steps")
@@ -536,14 +613,20 @@ def main():
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     parser.add_argument("--output", type=str, default="output.png", help="Output file path")
     parser.add_argument("--scheduler", type=str, default="ddpm", choices=["ddpm", "ddim", "euler", "pndm"], help="Scheduler type")
-    parser.add_argument("--device", type=str, default=None, help="Device (cuda/cpu)")
     
     args = parser.parse_args()
     
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
+
     print(f"Loading model: {args.model}")
     pipeline = create_pipeline(
         model_id=args.model,
-        device=args.device,
+        device=device,
         scheduler_type=args.scheduler
     )
     
