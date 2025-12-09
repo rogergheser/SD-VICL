@@ -7,11 +7,11 @@ The architecture is designed to allow easy modification of U-Net attention mecha
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Optional, Union, List, Callable
+from typing import Any, Optional, Union, List, Callable
 import torch
 from PIL import Image
 
-ATTN_OUTPUTS = defaultdict(lambda: defaultdict(list))
+# ATTN_OUTPUTS = defaultdict(lambda: defaultdict(list))
 @dataclass
 class GenerationConfig:
     """Configuration for image generation."""
@@ -211,7 +211,7 @@ class LatentProcessor:
             T.Normalize([0.5], [0.5])
         ])
         
-        image_tensor = transform(image).unsqueeze(0).to(self.device, dtype=self.dtype)
+        image_tensor = transform(image).unsqueeze(0).to(self.device, dtype=self.dtype) # type: ignore
         
         with torch.no_grad():
             latents = self.vae.encode(image_tensor).latent_dist.sample()
@@ -318,38 +318,73 @@ class UNetWrapper:
 
         def make_hook(full_child_name, which):
             # TODO change hook so that it keeps a counter to understand which sample it is processing and can decide what to save accordingly
-            # returns a hook that stores the output tensor
-            def hook(module, inp, out):
-                # out may be a tensor or tuple - keep it simple and store tensor(s)
-                # detach to avoid grads and optionally move to cpu to avoid GPU memory growth
-                if isinstance(out, torch.Tensor):
-                    saved = out.detach().cpu()  # remove .cpu() if you want to keep cuda tensors
-                else:
-                    # tuple/list of tensors
-                    saved = tuple(o.detach().cpu() if isinstance(o, torch.Tensor) else o for o in out)
-                ATTN_OUTPUTS[full_child_name][which].append(saved)
-            return hook
+            def replace_attention(module, inp, out):
+                if isinstance(inp, tuple):
+                    inp = inp[0]
+                    assert isinstance(inp, torch.Tensor)  # stack to single tensor for easier indexing
+                # B->Value, A->Key, C->Query
+                B = inp.shape[0]
+                assert B % 4 == 0, "Batch must contain ABCD in order"
+                group = B // 4
 
+                B_idx = slice(0*group, 1*group)
+                A_idx = slice(1*group, 2*group)
+                C_idx = slice(2*group, 3*group)
+                D_idx = slice(3*group, 4*group)
+
+                if which == "q":
+                    out[D_idx] = out[C_idx]   # D query = C query
+                elif which == "k":
+                    out[D_idx] = out[A_idx]   # D key = A key
+                elif which == "v":
+                    out[D_idx] = out[B_idx]   # D value = B value
+
+                elif which == '':
+                    pass  # attention module itself
+                else:
+                    raise ValueError(f"Unknown which value: {which} found at {full_child_name}")
+                if isinstance(out, torch.Tensor):
+                    # custom attention logic here
+                    out = out  # modify as needed
+                else:
+                    raise ValueError(f"Expected tensor output from attention module {full_child_name}")
+                return out
+            return replace_attention
+        
+        skip_list = []
         for parent_name, attn_module in attn_layers:
+            if hasattr(attn_module, 'is_cross_attention') and attn_module.is_cross_attention:
+                # skip cross-attention for now
+                skip_list.append(parent_name)
+                continue
+            skip = False
+            for layer in skip_list:
+                if parent_name.startswith(layer):
+                    # print(f"Skipping attention module {parent_name} due to parent skip")
+                    skip = True
+                    break
+            if skip:
+                continue
             # iterate child modules to find to_q/to_k/to_v (attribute names vary by implementation)
             for child_name, child_mod in attn_module.named_modules():
-                lname = child_name.lower()
-                if 'to_q' in lname or child_name.lower().endswith('.q') or lname == 'q':
+                if not isinstance(child_mod, torch.nn.Linear):
+                    continue
+                if child_name.lower().endswith('to_q'):
                     full_child_name = f"{parent_name}.{child_name}"
                     handle = child_mod.register_forward_hook(make_hook(full_child_name, 'q'))
                     self._attention_hooks[full_child_name] = handle
-                    ATTN_OUTPUTS[full_child_name]  # ensure key exists
-                elif 'to_k' in lname or child_name.lower().endswith('.k') or lname == 'k':
+                    # ATTN_OUTPUTS[full_child_name]  # ensure key exists
+                elif child_name.lower().endswith('to_k'):
                     full_child_name = f"{parent_name}.{child_name}"
                     handle = child_mod.register_forward_hook(make_hook(full_child_name, 'k'))
                     self._attention_hooks[full_child_name] = handle
-                    ATTN_OUTPUTS[full_child_name]
-                elif 'to_v' in lname or child_name.lower().endswith('.v') or lname == 'v':
+                    # ATTN_OUTPUTS[full_child_name]  # ensure key exists
+                elif child_name.lower().endswith('to_v'):
                     full_child_name = f"{parent_name}.{child_name}"
                     handle = child_mod.register_forward_hook(make_hook(full_child_name, 'v'))
                     self._attention_hooks[full_child_name] = handle
-                    ATTN_OUTPUTS[full_child_name]
-                elif '' in lname:
+                    # ATTN_OUTPUTS[full_child_name]
+                elif child_name.lower().endswith(''):
                     # This is the attention module, we will work with this later
                     continue
 
@@ -362,7 +397,7 @@ class UNetWrapper:
                         full_child_name = f"{parent_name}.{attr}"
                         handle = child_mod.register_forward_hook(make_hook(full_child_name, attr[-1]))  # 'q','k','v'
                         self._attention_hooks[full_child_name] = handle
-                        ATTN_OUTPUTS[full_child_name]
+                        # ATTN_OUTPUTS[full_child_name]
 
     def clear_attention_hooks(self) -> None:
         """Clear all registered attention hooks."""
@@ -407,33 +442,15 @@ class UNetWrapper:
         Returns:
             Predicted noise
         """
-        dict_map = "ABCD"
-        self_attn_outputs = {}
-        for i in range(3):
-            # Forward pass with current forward hooks to extract QKV values
-            noise_pred = self.unet(
-                latents[i],
-                timestep,
-                encoder_hidden_states=encoder_hidden_states,
-                **kwargs
-            ).sample
-
-            self_attn_outputs[dict_map[i]] = ATTN_OUTPUTS.copy()
-            # Clear ATTN_OUTPUTS for next pass
-            for key in ATTN_OUTPUTS.keys():
-                ATTN_OUTPUTS[key]['q'].clear()
-                ATTN_OUTPUTS[key]['k'].clear()
-                ATTN_OUTPUTS[key]['v'].clear()
-        
-
-        # TODO Register different forward hook to adapt the custom attention mechanism for D
-        # The forward hook will take care of modifying the inputs to the attention mechanisms
+        B, C, H, W = latents.shape
+        assert B == 4*2, "Batch size must be 8"
+        # Forward pass with current forward hooks to extract QKV values
         noise_pred = self.unet(
-                latents[-1],
-                timestep,
-                encoder_hidden_states=encoder_hidden_states,
-                **kwargs
-            ).sample
+            latents,
+            timestep,
+            encoder_hidden_states=encoder_hidden_states,
+            **kwargs
+        ).sample
 
         return noise_pred
 
@@ -485,7 +502,7 @@ class DiffusionPipeline:
         self.scheduler = components["scheduler"]
     
     @torch.no_grad()
-    def generate(self, config: GenerationConfig, callback: Optional[Callable] = None) -> List[Image.Image]:
+    def generate(self, samples: List[Image.Image], config: GenerationConfig, callback: Optional[Callable] = None) -> List[Image.Image]:
         """
         Generate images from text prompt.
         
@@ -496,35 +513,30 @@ class DiffusionPipeline:
         Returns:
             List of generated PIL Images
         """
-        # Set up generator for reproducibility
-        generator = None
-        if config.seed is not None:
-            generator = torch.Generator(device=self.device).manual_seed(config.seed)
-        
         # Encode text prompt
-        text_embeddings = self.text_encoder_wrapper.encode(config.prompt)
-        
-        # Handle classifier-free guidance - duplicate embeddings for batch
-        if config.num_images > 1:
-            text_embeddings = text_embeddings.repeat(config.num_images, 1, 1)
+        text_embeddings = self.text_encoder_wrapper.encode([config.prompt]*4)
         
         # Handle classifier-free guidance
         if config.guidance_scale > 1.0:
             uncond_embeddings = self.text_encoder_wrapper.encode(
                 config.negative_prompt if config.negative_prompt else ""
             )
-            if config.num_images > 1:
-                uncond_embeddings = uncond_embeddings.repeat(config.num_images, 1, 1)
+            uncond_embeddings = uncond_embeddings.repeat(config.num_images*4, 1, 1)
             # Concatenate: [uncond_batch, cond_batch]
             text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
         
-        # Get initial latents
-        latents = self.latent_processor.get_initial_latents(
-            config.num_images,
-            config.height,
-            config.width,
-            generator
-        )
+        # TODO remove
+        # We use C to create the latent representation for D as they should be structurally similar
+        # samples.append(samples[-1].copy())  
+        # # Get initial latents
+        # latents = torch.stack(
+        #     [
+        #         self.latent_processor.encode_image(img)
+        #         for img in samples
+        #     ]
+        # )
+        latents = torch.rand(4*config.num_images, 4, 16, 16).to(self.device)
+        assert latents.shape[0] == 4, "Latent batch size mismatch"
         
         # Set up scheduler
         self.scheduler.set_timesteps(config.num_inference_steps)
@@ -567,8 +579,8 @@ class DiffusionPipeline:
 
 def create_pipeline(
     model_id: str = "stabilityai/stable-diffusion-2-1-base",
-    device: str = None,
-    dtype: torch.dtype = None,
+    device: str | None = None,
+    dtype: torch.dtype | None = None,
     scheduler_type: str = "ddpm"
 ) -> DiffusionPipeline:
     """
@@ -645,8 +657,9 @@ def main():
     
     def progress_callback(step, timestep, latents):
         print(f"Step {step + 1}/{args.steps}")
-    
-    images = pipeline.generate(config, callback=progress_callback)
+
+    samples = [] # TODO get the images to work with
+    images = pipeline.generate(samples, config, callback=progress_callback)
     
     # Save images
     if len(images) == 1:
