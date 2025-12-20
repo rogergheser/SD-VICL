@@ -2,7 +2,7 @@ import torch
 from PIL import Image
 from diffusers.models.attention_processor import Attention
 from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
-from models.sd_vicl_attention import SD_VICL_AttnProcessor
+from ml_modules.attention import SD_VICL_AttnProcessor
 
 
 class LatentProcessor:

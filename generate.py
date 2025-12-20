@@ -7,7 +7,7 @@ The architecture is designed to allow easy modification of U-Net attention mecha
 
 import torch
 from PIL import Image
-from models.ldm_pipeline import GenerationConfig, create_pipeline
+from ml_modules.pipeline import GenerationConfig, create_pipeline
 from utils import save_images
 
 

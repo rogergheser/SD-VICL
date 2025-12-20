@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 import torch
 from typing import Callable
-from models.ldm_model_loader import ModelLoader
+from ml_modules.model_loader import ModelLoader
 
-from models.ldm_modules import LatentProcessor, UNetWrapper, TextEncoder
+from ml_modules.modules import LatentProcessor, UNetWrapper, TextEncoder
 from PIL import Image
 
 from utils import DEVICE, DTYPE, SEED, adain
