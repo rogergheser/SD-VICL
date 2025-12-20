@@ -252,7 +252,7 @@ class UNetWrapper:
         """
         B, _, _, _ = latents.shape
         # kwargs['attention_scale'] = kwargs.pop('attention_temperature', 0.4)
-        assert B == 4*2, "Batch size must be 8"
+        assert B == 8, "Batch size must be 8"
         # Forward pass with current forward hooks to extract QKV values
         noise_pred = self.unet(
             latents,

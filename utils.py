@@ -34,8 +34,7 @@ def apply_swap_guidance(
         Returns:
             Modified noise prediction with swap-guidance applied
         """
-        modified_noise_pred = noise_pred[4:, ...].clone() # First 4 are conditioned
-        default_noise_pred = noise_pred[:4, ...].clone() # Last 4 are default
+        modified_noise_pred, default_noise_pred = noise_pred.chunk(2)
         reweighting_factor = gamma * (total_timesteps - current_timestep) / total_timesteps
         noise_pred = default_noise_pred + (modified_noise_pred - default_noise_pred) * reweighting_factor
         return torch.cat([noise_pred, default_noise_pred], dim=0)

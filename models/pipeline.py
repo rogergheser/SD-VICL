@@ -18,7 +18,7 @@ class GenerationConfig:
     height: int = 512
     width: int = 512
     num_inference_steps: int = 70
-    guidance_scale: float =7.5
+    guidance_scale: float = 7.5
     contrast_strength: float = 1.67 # beta
     attention_temperature: float = 0.4
     swap_guidance: float = 3.5 # gamma
@@ -135,7 +135,6 @@ class DiffusionPipeline:
                 total_timesteps=config.num_inference_steps,
                 # attention_temperature=config.attention_temperature
             )
-            exit()
             
             # Apply classifier-free guidance
             noise_cond, noise_uncond = noise_pred.chunk(2)

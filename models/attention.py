@@ -98,7 +98,7 @@ class SD_VICL_AttnProcessor(AttnProcessor):
     def apply_attention_map_contrasting_and_temperature(self, default_attention_scores):
         """The purpose of this function is to apply the attention map contrasting described
         in the paper. To apply this we recontrast """
-        default_attention_scores = default_attention_scores # / self.temperature
+        default_attention_scores = default_attention_scores
         x = default_attention_scores[3, ...] # We take the D value
         mu = x.mean()
         default_attention_scores[3,...] = mu + self.contrast_strength * (x - mu)

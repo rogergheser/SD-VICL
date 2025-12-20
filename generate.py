@@ -17,8 +17,6 @@ def main():
     parser.add_argument("--prompt", type=str, default="Bear Plushie", help="Text prompt for generation")
     parser.add_argument("--negative-prompt", type=str, default="", help="Negative prompt")
     parser.add_argument("--model", type=str, default="sd-legacy/stable-diffusion-v1-5", help="Model ID")
-    # parser.add_argument("--model", type=str, default="stabilityai/stable-diffusion-3-medium_amdgpu", help="Model ID")
-    # parser.add_argument("--model", type=str, default="stabilityai/stable-diffusion-2-1-base", help="Model ID")
     parser.add_argument("--height", type=int, default=512, help="Image height")
     parser.add_argument("--width", type=int, default=512, help="Image width")
     parser.add_argument("--steps", type=int, default=70, help="Number of inference steps")
