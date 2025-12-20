@@ -166,7 +166,6 @@ class UNetWrapper:
                     assert isinstance(
                         inp, torch.Tensor
                     )  # stack to single tensor for easier indexing
-                print(f"{full_child_name}: {inp.size(1)}")
                 # 0->Q, 1->K, 2->V
                 B = inp.shape[0]
                 assert B % 4 == 0, "Batch must contain ABCD in order"
@@ -221,7 +220,6 @@ class UNetWrapper:
             skip = False
             for layer in skip_list:
                 if parent_name.startswith(layer):
-                    # print(f"Skipping attention module {parent_name} due to parent skip")
                     skip = True
                     break
             if skip:
