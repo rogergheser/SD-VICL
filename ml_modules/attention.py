@@ -63,7 +63,9 @@ class SD_VICL_AttnProcessor(AttnProcessor):
             encoder_hidden_states = attn.norm_encoder_hidden_states(
                 encoder_hidden_states
             )
-
+        assert attn.to_k is not None
+        assert attn.to_v is not None
+        assert attn.to_out is not None
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
