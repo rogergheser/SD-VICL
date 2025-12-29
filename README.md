@@ -44,7 +44,6 @@ pipeline = create_pipeline(model_id="stabilityai/stable-diffusion-2-1-base")
 config = GenerationConfig(
     prompt="a photograph of an astronaut riding a horse",
     num_inference_steps=50,
-    guidance_scale=7.5,
     seed=42
 )
 

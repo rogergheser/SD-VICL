@@ -1,22 +1,79 @@
 import os
+from pathlib import Path
 from PIL import Image
 import torch
 
 
-def save_images(images: list[Image.Image], output_path: str):
+def get_name_without_extension(file_path: Path) -> str:
+    for name in [
+        "backpack",
+        "bear",
+        "can",
+        "dog",
+    ]:
+        if name in file_path.stem.lower():
+            return name
+    raise ValueError(f"Unknown file name in path: {file_path}")
+
+
+def save_images(images: list[Image.Image], output_path: Path):
     # Save images
+    output_path = Path(output_path)
     if len(images) == 1:
         images[0].save(output_path)
         print(f"Saved image to {output_path}")
     else:
-        base_name = output_path.rsplit(".", 1)
         for i, img in enumerate(images):
-            if len(base_name) > 1:
-                output_path = f"{base_name[0]}_{i}.{base_name[1]}"
+            name = get_name_without_extension(output_path)
+            if output_path.suffix:
+                new_path = output_path.with_name(f"{output_path.stem}_{i}{name}")
             else:
-                output_path = f"{output_path}_{i}"
-            img.save(output_path)
-            print(f"Saved image to {output_path}")
+                new_path = output_path.with_name(f"{output_path.name}_{i}")
+            img.save(new_path)
+            print(f"Saved image to {new_path}")
+
+
+def save_merged(
+    original: list[Image.Image],
+    ground_truth: Image.Image,
+    generated: list[Image.Image],
+    output_path: Path = Path("merged_output.png"),
+):
+    """Save a merged image showing original + ground_truth on the first row and generated on the second row."""
+    first_row = [*original, ground_truth]
+    second_row = [*generated]
+
+    if first_row:
+        widths1, heights1 = zip(*(im.size for im in first_row))
+        row1_width = sum(widths1)
+        row1_height = max(heights1)
+    else:
+        row1_width = row1_height = 0
+
+    if second_row:
+        widths2, heights2 = zip(*(im.size for im in second_row))
+        row2_width = sum(widths2)
+        row2_height = max(heights2)
+    else:
+        row2_width = row2_height = 0
+
+    total_width = max(row1_width, row2_width)
+    total_height = row1_height + row2_height
+
+    new_im = Image.new("RGB", (total_width, total_height), (0, 0, 0))
+
+    x_offset = 0
+    for im in first_row:
+        new_im.paste(im, (x_offset, 0))
+        x_offset += im.size[0]
+
+    x_offset = 0
+    for im in second_row:
+        new_im.paste(im, (x_offset, row1_height))
+        x_offset += im.size[0]
+
+    new_im.save(output_path)
+    print(f"Saved merged image to {output_path}")
 
 
 def apply_swap_guidance(
