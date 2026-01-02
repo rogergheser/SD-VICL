@@ -5,10 +5,13 @@ This module provides modular building blocks for latent diffusion image generati
 The architecture is designed to allow easy modification of U-Net attention mechanisms.
 """
 
+from pathlib import Path
 import torch
-from PIL import Image
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from datamodule import PairsDataset, PairsInput
 from ml_modules.pipeline import GenerationConfig, create_pipeline
-from utils import save_images
+from utils import save_images, save_merged
 
 
 def main():
@@ -33,12 +36,6 @@ def main():
         "--steps", type=int, default=70, help="Number of inference steps"
     )
     parser.add_argument(
-        "--guidance-scale",
-        type=float,
-        default=3.5,
-        help="Classifier-free guidance scale",
-    )
-    parser.add_argument(
         "--contrast-strength", type=float, default=1.67, help="Contrast strength (beta)"
     )
     parser.add_argument(
@@ -56,9 +53,7 @@ def main():
     parser.add_argument(
         "--seed", type=int, default=None, help="Random seed for reproducibility"
     )
-    parser.add_argument(
-        "--output", type=str, default="output.png", help="Output file path"
-    )
+    parser.add_argument("--outdir", type=str, default="output", help="Output directory")
     parser.add_argument(
         "--scheduler",
         type=str,
@@ -84,7 +79,6 @@ def main():
         height=args.height,
         width=args.width,
         num_inference_steps=args.steps,
-        guidance_scale=args.guidance_scale,
         contrast_strength=args.contrast_strength,
         attention_temperature=args.attention_temperature,
         swap_guidance=args.swap_guidance,
@@ -95,21 +89,33 @@ def main():
         config=config, model_id=args.model, device=device, scheduler_type=args.scheduler
     )
 
-    print(f"Generating image with prompt: {args.prompt}")
+    dl = DataLoader(
+        dataset=PairsDataset(
+            root="inputs", target_size=(args.height, args.width)
+        ),  # Dummy dataset for samples
+        batch_size=1,
+        collate_fn=lambda x: x[0],
+        shuffle=False,
+    )
 
-    def progress_callback(step, timestep, latents):
-        print(f"Step {step + 1}/{args.steps}")
+    for batch in tqdm(dl, desc="Batches", position=0):
+        assert isinstance(batch, PairsInput), (
+            f"Batch should be of type PairsInput, got {type(batch)}"
+        )
+        (
+            input_image,
+            guid_image,
+            guid_ground_truth,
+            ground_truth_mask,
+            input_category,
+        ) = batch.to_tuple()
+        out_dir = Path(args.outdir) / input_category
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    samples_paths = [
-        "inputs/bear/images/bear_plushie_01.jpg",  # Q
-        "inputs/backpack/images/backpack_02.jpg",  # K
-        "inputs/backpack/alphas/backpack_02.png",  # V
-    ]
-
-    samples = [Image.open(p).convert("RGB").resize((256, 256)) for p in samples_paths]
-
-    images = pipeline.generate(samples, config, callback=progress_callback)
-    save_images(images, args.output)
+        samples = [input_image, guid_image, guid_ground_truth]
+        images = pipeline.generate(samples, config, callback=None)
+        save_images(images, out_dir / "generated.png")
+        save_merged(samples, ground_truth_mask, images, out_dir / "merged_output.png")
 
 
 if __name__ == "__main__":
