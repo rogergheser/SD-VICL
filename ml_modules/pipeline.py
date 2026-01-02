@@ -162,7 +162,7 @@ def swap_free_guidance(
     Apply swap-free guidance to the predicted noise.
 
     Args:
-        noise: Predicted noise tensor
+        noise_pred: Predicted noise tensor
         swap_guidance: Swap guidance scale (gamma)
         t: Current timestep
         T: Total timesteps
