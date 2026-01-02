@@ -11,7 +11,7 @@ import torch
 #             AttnProcessor()
 #         )
 class SD_VICL_AttnProcessor(AttnProcessor):
-    def __init__(self, contrast_strength: float, temperature: float):
+    def __init__(self, temperature: float, contrast_strength: float):
         super().__init__()
         self.temperature = temperature
         self.contrast_strength = contrast_strength
