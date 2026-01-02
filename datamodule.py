@@ -102,8 +102,12 @@ class PairsDataset(Dataset):
         )
         input_category = input_sample["category"]
 
-        remaining_categories = set(self.samples.keys()) - {input_category}
-        guid_category = random.choice(list(remaining_categories))
+        remaining_categories = [
+            category_path
+            for category_path in self.samples.keys()
+            if category_path.stem != input_category
+        ]
+        guid_category = random.choice(remaining_categories)
         guid_sample = random.choice(self.samples[guid_category])
         guid_image = (
             Image.open(guid_sample["image"]).convert("RGB").resize(self.target_size)
