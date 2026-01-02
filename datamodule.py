@@ -119,6 +119,8 @@ class PairsDataset(Dataset):
         if self.transform:
             input_image = self.transform(input_image)
             ground_truth_mask = self.transform(ground_truth_mask)
+            guid_image = self.transform(guid_image)
+            guid_ground_truth = self.transform(guid_ground_truth)
 
         return PairsInput(
             input_image=input_image,
