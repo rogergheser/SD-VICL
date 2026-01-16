@@ -4,23 +4,25 @@ from typing import Callable
 
 from tqdm import tqdm
 
+from ml_modules.adain import adain
 from ml_modules.model_loader import ModelLoader
 
 from ml_modules.modules import LatentProcessor, UNetWrapper, TextEncoder
 from PIL import Image
 
-from utils import DEVICE, DTYPE, SEED, adain
+from utils import DEVICE, DTYPE, SEED
 
 
 @dataclass
 class GenerationConfig:
     """Configuration for image generation."""
 
-    prompt: str
+    prompt: str = ""
     negative_prompt: str = ""
     height: int = 512
     width: int = 512
     num_inference_steps: int = 70
+    warmup_steps: int = 10
     contrast_strength: float = 1.67  # beta
     attention_temperature: float = 0.4
     swap_guidance: float = 3.5  # gamma
@@ -78,6 +80,7 @@ class DiffusionPipeline:
         samples: list[Image.Image],
         config: GenerationConfig,
         callback: Callable | None = None,
+        debug: bool = False,
     ) -> list[Image.Image]:
         """
         Generate images from text prompt.
@@ -85,7 +88,7 @@ class DiffusionPipeline:
         Args:
             config: Generation configuration
             callback: Optional callback function called at each step
-
+            debug: Enable debug mode
         Returns:
             List of generated PIL Images
         """
@@ -124,25 +127,32 @@ class DiffusionPipeline:
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
             # Predict noise
+            if i == config.warmup_steps:
+                self.unet_wrapper.register_attention_hook()
             noise_pred = self.unet_wrapper.forward(
                 latent_model_input,
                 t,
                 encoder_hidden_states=text_embeddings,
+                warmup=i > config.warmup_steps,
             )
 
-            noise_pred = swap_free_guidance(
-                noise_pred,
-                swap_guidance=config.swap_guidance,
-                t=i,
-                T=config.num_inference_steps,
-            )
+            if i > config.warmup_steps:
+                noise_pred = swap_free_guidance(
+                    noise_pred,
+                    swap_guidance=config.swap_guidance,
+                    t=i,
+                    T=config.num_inference_steps,
+                )
+            else:
+                noise_pred = noise_pred.chunk(2)[1]  # They are both unconditioned
 
             # Denoise step
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
             d_idx = 3
             v_idx = 2
-            latents[d_idx] = adain(latents[d_idx], latents[v_idx])
+            if i > config.warmup_steps:
+                latents[d_idx] = adain(latents[d_idx], latents[v_idx])
 
             # Call callback if provided
             if callback is not None:

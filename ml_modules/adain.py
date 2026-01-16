@@ -1,4 +1,12 @@
-def masked_adain(content_feat, style_feat, content_mask, style_mask):
+import torch
+
+
+def masked_adain(
+    content_feat: torch.Tensor,
+    style_feat: torch.Tensor,
+    content_mask: torch.Tensor,
+    style_mask: torch.Tensor,
+) -> torch.Tensor:
     assert content_feat.size()[:2] == style_feat.size()[:2]
     size = content_feat.size()
     style_mean, style_std = calc_mean_std(style_feat, mask=style_mask)
@@ -12,7 +20,7 @@ def masked_adain(content_feat, style_feat, content_mask, style_mask):
     return content_feat * (1 - content_mask) + style_normalized_feat * content_mask
 
 
-def adain(content_feat, style_feat):
+def adain(content_feat: torch.Tensor, style_feat: torch.Tensor) -> torch.Tensor:
     assert content_feat.size()[:2] == style_feat.size()[:2]
     size = content_feat.size()
     style_mean, style_std = calc_mean_std(style_feat)
@@ -23,7 +31,9 @@ def adain(content_feat, style_feat):
     return normalized_feat * style_std.expand(size) + style_mean.expand(size)
 
 
-def calc_mean_std(feat, eps=1e-5, mask=None):
+def calc_mean_std(
+    feat: torch.Tensor, eps: float = 1e-5, mask: torch.Tensor | None = None
+) -> tuple[torch.Tensor, torch.Tensor]:
     # eps is a small value added to the variance to avoid divide-by-zero.
     size = feat.size()
     if len(size) == 2:
@@ -43,7 +53,9 @@ def calc_mean_std(feat, eps=1e-5, mask=None):
     return feat_mean, feat_std
 
 
-def calc_mean_std_2d(feat, eps=1e-5, mask=None):
+def calc_mean_std_2d(
+    feat: torch.Tensor, eps: float = 1e-5, mask: torch.Tensor | None = None
+) -> tuple[torch.Tensor, torch.Tensor]:
     # eps is a small value added to the variance to avoid divide-by-zero.
     size = feat.size()
     assert len(size) == 2

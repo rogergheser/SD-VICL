@@ -5,13 +5,14 @@ This module provides modular building blocks for latent diffusion image generati
 The architecture is designed to allow easy modification of U-Net attention mechanisms.
 """
 
+from functools import partial
 from pathlib import Path
 import torch
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-from datamodule import PairsDataset, PairsInput
 from ml_modules.pipeline import GenerationConfig, create_pipeline
-from utils import save_merged
+from PIL import Image
+from utils import save_images, save_merged
+
+DEBUG = True
 
 
 def main():
@@ -89,35 +90,47 @@ def main():
         config=config, model_id=args.model, device=device, scheduler_type=args.scheduler
     )
 
-    dl = DataLoader(
-        dataset=PairsDataset(
-            root="inputs", target_size=(args.height, args.width)
-        ),  # Dummy dataset for samples
-        batch_size=1,
-        collate_fn=lambda x: x[0],
-        shuffle=False,
+    print(f"Generating image with prompt: {args.prompt}")
+
+    def progress_callback(step, timestep, latents):
+        print(f"Step {step + 1}/{args.steps}")
+
+    def save_call_back(step, timestep, latents, gt_mask, original_images):
+        if step % 10 == 0 or step == args.steps - 1:
+            print(f"Step {step + 1}/{args.steps}")
+            images = pipeline.latent_processor.decode_latents(latents)
+            save_merged(
+                original_images,
+                gt_mask,
+                images,
+                Path(args.outdir) / f"debug_step_{step + 1:03d}.png",
+            )
+
+    samples_paths = [
+        "inputs/bear/images/bear_plushie_01.jpg",  # Q
+        # "inputs/backpack/images/backpack_05.jpg",  # Q
+        "inputs/backpack/images/backpack_02.jpg",  # K
+        "inputs/backpack/alphas/backpack_02.png",  # V
+    ]
+    gt_mask_path = samples_paths[0].replace("images", "alphas").replace(".jpg", ".png")
+
+    samples = [
+        Image.open(p).convert("RGB").resize((args.width, args.height))
+        for p in samples_paths
+    ]
+    images = pipeline.generate(
+        samples,
+        config,
+        callback=partial(
+            save_call_back,
+            gt_mask=Image.open(gt_mask_path)
+            .convert("L")
+            .resize((args.width, args.height)),
+            original_images=samples,
+        ),
+        debug=True,
     )
-
-    for idx, batch in enumerate(tqdm(dl, desc="Batches", position=0)):
-        assert isinstance(batch, PairsInput), (
-            f"Batch should be of type PairsInput, got {type(batch)}"
-        )
-        (
-            input_image,
-            guid_image,
-            guid_ground_truth,
-            ground_truth_mask,
-            input_category,
-        ) = batch.to_tuple()
-        out_dir = Path(args.outdir) / input_category
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        samples = [input_image, guid_image, guid_ground_truth]
-        images = pipeline.generate(samples, config, callback=None)
-        # save_images(images, out_dir / f"generated_{idx}.png")
-        save_merged(
-            samples, ground_truth_mask, images, out_dir / f"merged_output_{idx}.png"
-        )
+    save_images(images, Path(args.outdir) / "backpack.png")
 
 
 if __name__ == "__main__":

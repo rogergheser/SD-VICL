@@ -263,6 +263,7 @@ class UNetWrapper:
         latents: torch.Tensor,
         timestep: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
+        warmup: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         """

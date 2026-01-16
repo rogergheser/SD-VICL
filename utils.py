@@ -11,9 +11,10 @@ def get_name_without_extension(file_path: Path) -> str:
         "can",
         "dog",
     ]:
-        if name in file_path.stem.lower():
-            return name
-    raise ValueError(f"Unknown file name in path: {file_path}")
+        extr = file_path.stem.split("/")[-1]
+        if extr in file_path.stem.lower():
+            return extr
+    raise ValueError(f"Unknown file name in path: {file_path} -- {extr}")
 
 
 def save_images(images: list[Image.Image], output_path: Path):
@@ -24,9 +25,10 @@ def save_images(images: list[Image.Image], output_path: Path):
         print(f"Saved image to {output_path}")
     else:
         for i, img in enumerate(images):
-            name = get_name_without_extension(output_path)
             if output_path.suffix:
-                new_path = output_path.with_name(f"{output_path.stem}_{i}{output_path.suffix}")
+                new_path = output_path.with_name(
+                    f"{output_path.stem}_{i}{output_path.suffix}"
+                )
             else:
                 new_path = output_path.with_name(f"{output_path.name}_{i}")
             img.save(new_path)

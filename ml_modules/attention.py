@@ -68,11 +68,11 @@ class SD_VICL_AttnProcessor(AttnProcessor):
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
+        query, key, value = self.adjust_d_qkv(query, key, value)
+
         query = attn.head_to_batch_dim(query)
         key = attn.head_to_batch_dim(key)
         value = attn.head_to_batch_dim(value)
-
-        query, key, value = self.adjust_d_qkv(query, key, value, attn.heads)
 
         attention_probs = self.get_attention_scores(attn, query, key, attention_mask)
         hidden_states = torch.bmm(attention_probs, value)
@@ -100,23 +100,20 @@ class SD_VICL_AttnProcessor(AttnProcessor):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        heads: int,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Adjust the D by integrating information from self attention of A, B, C samples according
-        to the paper implementation.
-        Sample image is Q
-        Guidance image is K
-        Guidance ground truth image is V
-        Target image to modify is D
         """
-        Q_slice = slice(heads * 0, heads * 1)  # query
-        K_slice = slice(heads * 1, heads * 2)  # key
-        V_slice = slice(heads * 2, heads * 3)  # value
-        D_slice = slice(heads * 3, heads * 4)  # to-modify
+        query, key, value: (B, L, C)
+        B must be 4 (A, B, C, D)
+        """
 
-        query[D_slice] = query[Q_slice].clone()
-        key[D_slice] = key[K_slice].clone()
-        value[D_slice] = value[V_slice].clone()
+        assert query.shape[0] >= 4, "Expected batch with A,B,C,D"
+
+        Q_idx, K_idx, V_idx, D_idx = 0, 1, 2, 3
+
+        query[D_idx] = query[Q_idx]
+        key[D_idx] = key[K_idx]
+        value[D_idx] = value[V_idx]
+
         return query, key, value
 
     def get_attention_scores(
@@ -158,7 +155,7 @@ class SD_VICL_AttnProcessor(AttnProcessor):
         # Not doing multihead attention
         dim = query.shape[-1]
         attention_scores = torch.bmm(query, key.transpose(-1, -2))
-        attention_scores = attention_scores * (dim**-0.5) / temperature
+        attention_scores = attention_scores * (dim**-0.5) / (temperature)
 
         if attention_mask is not None:
             attention_scores = attention_scores + attention_mask
@@ -171,4 +168,4 @@ class SD_VICL_AttnProcessor(AttnProcessor):
         mu = x.mean(dim=-1, keepdim=True)
         x = mu + self.contrast_strength * (x - mu)
 
-        return x
+        return torch.clip(x, 0, 1)
