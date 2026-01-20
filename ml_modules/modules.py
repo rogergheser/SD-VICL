@@ -1,3 +1,4 @@
+from typing import Any
 import torch
 from PIL import Image
 from diffusers.models.attention_processor import Attention
@@ -146,9 +147,13 @@ class UNetWrapper:
         self._attention_hooks: dict[str, torch.utils.hooks.RemovableHandle] = {}
         self.temperature = attn_temperature
         self.contrast_strength = attn_contrast_strength
-        self.register_attention_hook()
+        self.attention_hooks_info = self.register_attention_hook()
+        with open("attention_hooks_info.json", "w") as f:
+            import json
 
-    def register_attention_hook(self) -> None:
+            json.dump(self.attention_hooks_info, f, indent=4)
+
+    def register_attention_hook(self) -> dict[str, Any]:
         """
         Register forward hooks on the Q/K/V linear submodules inside attention blocks.
         After calling this, ATTN_OUTPUTS will have entries like:
@@ -201,6 +206,9 @@ class UNetWrapper:
             return replace_attention
 
         skip_list = []
+        skip_modules = []
+        hooked_layers = []
+        hooked_modules = []
         for parent_name, attn_module in attn_layers:
             if (
                 hasattr(attn_module, "is_cross_attention")
@@ -208,6 +216,7 @@ class UNetWrapper:
             ):
                 # skip cross-attention for now
                 skip_list.append(parent_name)
+                skip_modules.append(attn_module.__class__.__name__)
                 continue
             if isinstance(attn_module, Attention):
                 attn_module.set_processor(
@@ -216,60 +225,15 @@ class UNetWrapper:
                         contrast_strength=self.contrast_strength,
                     )
                 )
-                print(f"Set SD_VICL_AttnProcessor for {parent_name}")
-            skip = False
-            for layer in skip_list:
-                if parent_name.startswith(layer):
-                    skip = True
-                    break
-            if skip:
-                continue
-            # iterate child modules to find to_q/to_k/to_v (attribute names vary by implementation)
-            for child_name, child_mod in attn_module.named_modules():
-                if isinstance(child_mod, Attention):
-                    full_child_name = f"{parent_name}.{child_name}"
-                    handle = child_mod.register_forward_hook(
-                        make_hook(full_child_name, "q")
-                    )
-                    self._attention_hooks[full_child_name] = handle
-                elif not isinstance(child_mod, torch.nn.Linear):
-                    continue
-                if child_name.lower().endswith("to_q"):
-                    full_child_name = f"{parent_name}.{child_name}"
-                    handle = child_mod.register_forward_hook(
-                        make_hook(full_child_name, "q")
-                    )
-                    self._attention_hooks[full_child_name] = handle
-                    # ATTN_OUTPUTS[full_child_name]  # ensure key exists
-                elif child_name.lower().endswith("to_k"):
-                    full_child_name = f"{parent_name}.{child_name}"
-                    handle = child_mod.register_forward_hook(
-                        make_hook(full_child_name, "k")
-                    )
-                    self._attention_hooks[full_child_name] = handle
-                    # ATTN_OUTPUTS[full_child_name]  # ensure key exists
-                elif child_name.lower().endswith("to_v"):
-                    full_child_name = f"{parent_name}.{child_name}"
-                    handle = child_mod.register_forward_hook(
-                        make_hook(full_child_name, "v")
-                    )
-                    self._attention_hooks[full_child_name] = handle
-                    # ATTN_OUTPUTS[full_child_name]
-                elif child_name.lower().endswith(""):
-                    # This is the attention module, we will work with this later
-                    continue
+                hooked_layers.append(parent_name)
+                hooked_modules.append(attn_module.__class__.__name__)
 
-        # fallback: if nothing matched (different naming), scan immediate attributes on attn_module
-        if len(self._attention_hooks) == 0:
-            for parent_name, attn_module in attn_layers:
-                for attr in ("to_q", "to_k", "to_v", "q_proj", "k_proj", "v_proj"):
-                    if hasattr(attn_module, attr):
-                        child_mod = getattr(attn_module, attr)
-                        full_child_name = f"{parent_name}.{attr}"
-                        handle = child_mod.register_forward_hook(
-                            make_hook(full_child_name, attr[-1])
-                        )  # 'q','k','v'
-                        self._attention_hooks[full_child_name] = handle
+        return {
+            "hooked_layers": hooked_layers,
+            "hooked_modules": hooked_modules,
+            "skipped_layers": skip_list,
+            "skipped_modules": skip_modules,
+        }
 
     def clear_attention_hooks(self) -> None:
         """Clear all registered attention hooks."""
@@ -299,8 +263,7 @@ class UNetWrapper:
         latents: torch.Tensor,
         timestep: torch.Tensor,
         encoder_hidden_states: torch.Tensor,
-        current_timestep: int,
-        total_timesteps: int,
+        warmup: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -317,11 +280,10 @@ class UNetWrapper:
             Predicted noise
         """
         B, _, _, _ = latents.shape
-        # kwargs['attention_scale'] = kwargs.pop('attention_temperature', 0.4)
         assert B == 8, "Batch size must be 8"
         # Forward pass with current forward hooks to extract QKV values
         noise_pred = self.unet(
-            latents, timestep, encoder_hidden_states=encoder_hidden_states, **kwargs
+            latents, timestep, encoder_hidden_states, **kwargs
         ).sample
 
         return noise_pred

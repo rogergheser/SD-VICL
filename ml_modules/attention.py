@@ -32,7 +32,6 @@ class SD_VICL_AttnProcessor(AttnProcessor):
             hidden_states = attn.spatial_norm(hidden_states, temb)
 
         input_ndim = hidden_states.ndim
-
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
             hidden_states = hidden_states.view(
@@ -69,6 +68,8 @@ class SD_VICL_AttnProcessor(AttnProcessor):
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
+        query, key, value = self.adjust_d_qkv(query, key, value)
+
         query = attn.head_to_batch_dim(query)
         key = attn.head_to_batch_dim(key)
         value = attn.head_to_batch_dim(value)
@@ -94,6 +95,27 @@ class SD_VICL_AttnProcessor(AttnProcessor):
 
         return hidden_states
 
+    def adjust_d_qkv(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        query, key, value: (B, L, C)
+        B must be 4 (A, B, C, D)
+        """
+
+        assert query.shape[0] >= 4, "Expected batch with A,B,C,D"
+
+        Q_idx, K_idx, V_idx, D_idx = 0, 1, 2, 3
+
+        query[D_idx] = query[Q_idx]
+        key[D_idx] = key[K_idx]
+        value[D_idx] = value[V_idx]
+
+        return query, key, value
+
     def get_attention_scores(
         self,
         attn: Attention,
@@ -101,21 +123,49 @@ class SD_VICL_AttnProcessor(AttnProcessor):
         key: torch.Tensor,
         attention_mask: torch.Tensor,
     ) -> torch.Tensor:
-        default_attention_scores = attn.get_attention_scores(
-            query, key, attention_mask=attention_mask
+        """Compute attention scores with attention map contrasting for D sample."""
+        default_attention_scores = self.standard_attention_scores(
+            query,
+            key,
+            attention_mask=attention_mask,
+            temperature=self.temperature,
+            heads=attn.heads,
         )
-        attention_probs = self.apply_attention_map_contrasting_and_temperature(
-            default_attention_scores,
+        D_slice = slice(attn.heads * 3, attn.heads * 4)
+        default_attention_scores[D_slice] = torch.stack(
+            [
+                self.apply_attention_map_contrasting(
+                    default_attention_scores[head_idx],
+                )
+                for head_idx in range(D_slice.start, D_slice.stop)
+            ]
         )
+        return default_attention_scores
 
-        return attention_probs
+    def standard_attention_scores(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        attention_mask: torch.Tensor,
+        temperature: float,
+        heads: int,
+    ) -> torch.Tensor:
+        """Compute standard attention scores without any modification."""
 
-    def apply_attention_map_contrasting_and_temperature(self, default_attention_scores):
+        # Not doing multihead attention
+        dim = query.shape[-1]
+        attention_scores = torch.bmm(query, key.transpose(-1, -2))
+        attention_scores = attention_scores * (dim**-0.5) / (temperature)
+
+        if attention_mask is not None:
+            attention_scores = attention_scores + attention_mask
+
+        return attention_scores.softmax(dim=-1)
+
+    def apply_attention_map_contrasting(self, x: torch.Tensor) -> torch.Tensor:
         """The purpose of this function is to apply the attention map contrasting described
         in the paper. To apply this we recontrast"""
-        default_attention_scores = default_attention_scores
-        x = default_attention_scores[3, ...]  # We take the D value
-        mu = x.mean()
-        default_attention_scores[3, ...] = mu + self.contrast_strength * (x - mu)
+        mu = x.mean(dim=-1, keepdim=True)
+        x = mu + self.contrast_strength * (x - mu)
 
-        return default_attention_scores
+        return torch.clip(x, 0, 1)

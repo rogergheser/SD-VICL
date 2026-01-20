@@ -1,24 +1,28 @@
 from dataclasses import dataclass
 import torch
 from typing import Callable
+
+from tqdm import tqdm
+
+from ml_modules.adain import adain
 from ml_modules.model_loader import ModelLoader
 
 from ml_modules.modules import LatentProcessor, UNetWrapper, TextEncoder
 from PIL import Image
 
-from utils import DEVICE, DTYPE, SEED, adain
+from utils import DEVICE, DTYPE, SEED
 
 
 @dataclass
 class GenerationConfig:
     """Configuration for image generation."""
 
-    prompt: str
+    prompt: str = ""
     negative_prompt: str = ""
     height: int = 512
     width: int = 512
     num_inference_steps: int = 70
-    guidance_scale: float = 7.5
+    warmup_steps: int = 10
     contrast_strength: float = 1.67  # beta
     attention_temperature: float = 0.4
     swap_guidance: float = 3.5  # gamma
@@ -64,7 +68,7 @@ class DiffusionPipeline:
         self.latent_processor = LatentProcessor(components["vae"], device, dtype)
         self.unet_wrapper = UNetWrapper(
             components["unet"],
-            attn_temperature=config.attention_temperature,  # ?
+            attn_temperature=config.attention_temperature,
             device=device,
             dtype=dtype,
         )
@@ -76,6 +80,7 @@ class DiffusionPipeline:
         samples: list[Image.Image],
         config: GenerationConfig,
         callback: Callable | None = None,
+        debug: bool = False,
     ) -> list[Image.Image]:
         """
         Generate images from text prompt.
@@ -83,7 +88,7 @@ class DiffusionPipeline:
         Args:
             config: Generation configuration
             callback: Optional callback function called at each step
-
+            debug: Enable debug mode
         Returns:
             List of generated PIL Images
         """
@@ -91,13 +96,12 @@ class DiffusionPipeline:
         text_embeddings = self.text_encoder_wrapper.encode([config.prompt] * 4)
 
         # Handle classifier-free guidance
-        if config.guidance_scale > 1.0:
-            uncond_embeddings = self.text_encoder_wrapper.encode(
-                config.negative_prompt if config.negative_prompt else ""
-            )
-            uncond_embeddings = uncond_embeddings.repeat(config.num_images * 4, 1, 1)
-            # Concatenate: [uncond_batch, cond_batch]
-            text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
+        uncond_embeddings = self.text_encoder_wrapper.encode(
+            config.negative_prompt if config.negative_prompt else ""
+        )
+        uncond_embeddings = uncond_embeddings.repeat(config.num_images * 4, 1, 1)
+        # Concatenate: [uncond_batch, cond_batch]
+        text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
 
         # We use C to create the latent representation for D as they should be structurally similar
         # Get initial latents
@@ -111,40 +115,44 @@ class DiffusionPipeline:
         latents = latents * self.scheduler.init_noise_sigma
 
         # Denoising loop
-        for i, t in enumerate(self.scheduler.timesteps):
+        for i, t in tqdm(
+            enumerate(self.scheduler.timesteps),
+            total=config.num_inference_steps,
+            desc="Denoising",
+            position=1,
+            leave=False,
+        ):
             # Expand latents for classifier-free guidance
-            if config.guidance_scale > 1.0:
-                latent_model_input = torch.cat([latents] * 2)
-            else:
-                latent_model_input = latents
-
+            latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
             # Predict noise
+            if i == config.warmup_steps:
+                self.unet_wrapper.register_attention_hook()
             noise_pred = self.unet_wrapper.forward(
                 latent_model_input,
                 t,
                 encoder_hidden_states=text_embeddings,
-                current_timestep=i,
-                total_timesteps=config.num_inference_steps,
-                # attention_temperature=config.attention_temperature
+                warmup=i > config.warmup_steps,
             )
 
-            # Apply classifier-free guidance
-            noise_cond, noise_uncond = noise_pred.chunk(2)
-            reweighting_factor = (
-                config.swap_guidance
-                * (config.num_inference_steps - i)
-                / config.num_inference_steps
-            )
-            noise_pred = noise_uncond + reweighting_factor * (noise_cond - noise_uncond)
+            if i > config.warmup_steps:
+                noise_pred = swap_free_guidance(
+                    noise_pred,
+                    swap_guidance=config.swap_guidance,
+                    t=i,
+                    T=config.num_inference_steps,
+                )
+            else:
+                noise_pred = noise_pred.chunk(2)[1]  # They are both unconditioned
 
             # Denoise step
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
             d_idx = 3
             v_idx = 2
-            latents[d_idx, ...] = adain(latents[d_idx, ...], latents[v_idx, ...])
+            if i > config.warmup_steps:
+                latents[d_idx] = adain(latents[d_idx], latents[v_idx])
 
             # Call callback if provided
             if callback is not None:
@@ -154,6 +162,26 @@ class DiffusionPipeline:
         images = self.latent_processor.decode_latents(latents)
 
         return images
+
+
+def swap_free_guidance(
+    noise_pred: torch.Tensor, swap_guidance: float, t: int, T: int
+) -> torch.Tensor:
+    """
+    Apply swap-free guidance to the predicted noise.
+
+    Args:
+        noise_pred: Predicted noise tensor
+        swap_guidance: Swap guidance scale (gamma)
+        t: Current timestep
+        T: Total timesteps
+    Returns:
+        Reweighted noise tensor
+    """
+    # Apply swap-free guidance
+    noise_cond, noise_uncond = noise_pred.chunk(2)
+    reweighting_factor = swap_guidance * (T - t) / T
+    return noise_uncond + reweighting_factor * (noise_cond - noise_uncond)
 
 
 def create_pipeline(
