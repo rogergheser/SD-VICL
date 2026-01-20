@@ -1,5 +1,6 @@
 # SD-VICL
-Repo to reproduce the work in https://arxiv.org/pdf/2508.09949
+Repo to reproduce the work in https://arxiv.org/pdf/2508.09949 from scratch.
+The authors never shared their code so this work is mine and took inspiration from (Cross-Image Attention)[https://github.com/garibida/cross-image-attention] for the AdaIn
 
 
 
